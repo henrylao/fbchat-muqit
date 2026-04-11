@@ -1,9 +1,11 @@
-""" Facebook Messenger uses Mqtt protocol to send and receive messages. This File handles Mqtt broker. """
+"""Facebook Messenger uses Mqtt protocol to send and receive messages. This File handles Mqtt broker."""
 
 from __future__ import annotations
 
 
-import aiomqtt, asyncio, aiohttp
+import aiomqtt
+import asyncio
+import aiohttp
 import random
 import json
 import time
@@ -15,7 +17,7 @@ from typing import Any, Callable, Dict, Optional
 from yarl import URL
 
 
-from .exception.errors import *
+from .exception.errors import FBChatError
 
 from .graphql import from_doc_id
 from .state import State
@@ -24,12 +26,15 @@ from .utils.utils import generate_uuid
 
 logger = get_logger()
 
-def generate_session_id()-> int:
-    return random.randint(1, 2 ** 53)
+
+def generate_session_id() -> int:
+    return random.randint(1, 2**53)
 
 
 def get_cookie_header(session: aiohttp.ClientSession, url: str) -> str:
-    return session.cookie_jar.filter_cookies(URL(url)).output(header="", sep=";").lstrip()
+    return (
+        session.cookie_jar.filter_cookies(URL(url)).output(header="", sep=";").lstrip()
+    )
 
 
 def get_random_reconnect_time() -> int:
@@ -62,26 +67,25 @@ class Mqtt:
 
     _message_handler: Optional[Callable] = field(default=None)
 
-    HOST = "edge-chat.facebook.com" # Mqtt host for facebook
-    iris_re   = re.compile(rb'"irisSeqId":\s*"(\d+)"')
-    first_re  = re.compile(rb'"firstDeltaSeqId":\s*(\d+)')
-    last_re   = re.compile(rb'"lastIssuedSeqId":\s*(\d+)')
-    tq_re     = re.compile(rb'"tqSeqId":\s*"(\d+)"')
-    sync_re   = re.compile(rb'"syncToken":\s*"([^"]+)"')
+    HOST = "edge-chat.facebook.com"  # Mqtt host for facebook
+    iris_re = re.compile(rb'"irisSeqId":\s*"(\d+)"')
+    first_re = re.compile(rb'"firstDeltaSeqId":\s*(\d+)')
+    last_re = re.compile(rb'"lastIssuedSeqId":\s*(\d+)')
+    tq_re = re.compile(rb'"tqSeqId":\s*"(\d+)"')
+    sync_re = re.compile(rb'"syncToken":\s*"([^"]+)"')
 
-    
     @classmethod
     async def connect(
-            cls, 
-            state: State, 
-            chat_on: bool, 
-            foreground: bool,
-            message_handler: Callable,
-            update_presence: bool = True,
-            auto_reconnect: bool = True
-            )-> Mqtt:
+        cls,
+        state: State,
+        chat_on: bool,
+        foreground: bool,
+        message_handler: Callable,
+        update_presence: bool = True,
+        auto_reconnect: bool = True,
+    ) -> Mqtt:
 
-        # configuring mqtt client 
+        # configuring mqtt client
         mqttClint = aiomqtt.Client(
             hostname=cls.HOST,
             identifier="mqttwsclient",
@@ -89,11 +93,11 @@ class Mqtt:
             protocol=aiomqtt.ProtocolVersion.V31,
             transport="websockets",
             port=443,
-            keepalive=60
+            keepalive=60,
         )
 
         sequence_id = await cls._fetch_sequence_id(state)
-        
+
         # creating `Mqtt` class instance for handlling mqtt connections
         self = cls(
             _state=state,
@@ -103,12 +107,12 @@ class Mqtt:
             _sequence_id=sequence_id,
             _mqttClientID=state._mqttClientID,
             _mqttAppID=state._mqttAppID,
-            _region=state._region,  
+            _region=state._region,
             _message_handler=message_handler,
             _update_presence=update_presence,
-            _auto_reconnect=auto_reconnect
+            _auto_reconnect=auto_reconnect,
         )
-    
+
         self._mqttClient._client.tls_set()
         self._configure_mqtt_options()
 
@@ -130,9 +134,8 @@ class Mqtt:
 
         return self
 
-
     @staticmethod
-    async def _fetch_sequence_id(state)-> int:
+    async def _fetch_sequence_id(state) -> int:
         """Fetch sequence ID."""
         params = {
             "limit": 1,
@@ -140,37 +143,36 @@ class Mqtt:
             "before": None,
             "includeDeliveryReceipts": False,
             "includeSeqID": True,
-            }
+        }
         j = await state._graphql_requests(from_doc_id("1349387578499440", params))
-        sequence_id = j[0]["viewer"]["message_threads"]["sync_sequence_id"] #type: ignore
+        sequence_id = j[0]["viewer"]["message_threads"]["sync_sequence_id"]  # type: ignore
         logger.debug(f"fetched sequence id: {sequence_id}")
         return int(sequence_id)
 
-
-    def _configure_mqtt_options(self)-> None:
+    def _configure_mqtt_options(self) -> None:
         session_id = generate_session_id()
         region = self._region
         mqttClientID = self._mqttClientID
         mqttAppID = self._mqttAppID
 
-        # The topics fbchat-muqit will listen to 
+        # The topics fbchat-muqit will listen to
         # with open("./fbchat_muqit/topics.json", "r") as f:
         #     data = json.loads(f.read())
         # topics = [i for i in data]
         # print(*topics)
         topics = [
             "/legacy_web",  # web related messages during graphql requests
-            "/ls_req",    # used to publish message payloads
-            "/ls_resp",   # receives response after pub to /ls_req
-            "/t_ms",      # all kinds of message, message events received
+            "/ls_req",  # used to publish message payloads
+            "/ls_resp",  # receives response after pub to /ls_req
+            "/t_ms",  # all kinds of message, message events received
             "/rtc_multi",
-            #"/t_rtc_multi",  # receives group calls
-            "/thread_typing", # typing status update received
+            # "/t_rtc_multi",  # receives group calls
+            "/thread_typing",  # typing status update received
             "/orca_typing_notifications",  # Messenger notifi.
-            "/orca_presence",     # receives users presence updates
+            "/orca_presence",  # receives users presence updates
             "/br_sr",
-            "/friend_request",      # receives friend request notification
-            "/friending_state_change", # when friend request confirmed/removed
+            "/friend_request",  # receives friend request notification
+            "/friending_state_change",  # when friend request confirmed/removed
             "/friend_requests_seen",  # new friend request seen
             "/sr_res",
             "/webrtc",
@@ -202,7 +204,7 @@ class Mqtt:
             "pack": [],
             "p": None,
             "aids": None,
-            "a": self._state._userAgent
+            "a": self._state._userAgent,
         }
         self._mqttClient._client.username_pw_set(json.dumps(username))
 
@@ -212,15 +214,15 @@ class Mqtt:
             ),
             "User-Agent": self._state._userAgent,
             "Origin": "https://www.facebook.com",
-            "Host": self.HOST
+            "Host": self.HOST,
         }
 
         self._mqttClient._client.ws_set_options(
-            path=f"/chat?region={region}&sid={session_id}&cid={mqttClientID}", headers=headers
+            path=f"/chat?region={region}&sid={session_id}&cid={mqttClientID}",
+            headers=headers,
         )
 
-    
-    async def _messenger_queue_publish(self)-> None:
+    async def _messenger_queue_publish(self) -> None:
         # configure receiving messages.
         payload = {
             "sync_api_version": 10,
@@ -243,16 +245,22 @@ class Mqtt:
     def extract_meta(self, raw):
         """extracts sequence and sync token"""
         ids = {
-            "firstDeltaSeqId": int(m.group(1)) if (m := self.first_re.search(raw)) else None,
-            "lastIssuedSeqId": int(m.group(1)) if (m := self.last_re.search(raw)) else None,
-            "syncToken": m.group(1).decode() if (m := self.sync_re.search(raw)) else None,
+            "firstDeltaSeqId": (
+                int(m.group(1)) if (m := self.first_re.search(raw)) else None
+            ),
+            "lastIssuedSeqId": (
+                int(m.group(1)) if (m := self.last_re.search(raw)) else None
+            ),
+            "syncToken": (
+                m.group(1).decode() if (m := self.sync_re.search(raw)) else None
+            ),
         }
-        self._sequence_id = ids["lastIssuedSeqId"] or ids["firstDeltaSeqId"] or self._sequence_id 
+        self._sequence_id = (
+            ids["lastIssuedSeqId"] or ids["firstDeltaSeqId"] or self._sequence_id
+        )
         self._sync_token = ids["syncToken"] or self._sync_token
         if not any(ids.values()):
             logger.debug("No seqId/syncToken found in payload slice")
-
-    
 
     async def listen(self):
         if not self._mqttClient:
@@ -262,17 +270,23 @@ class Mqtt:
             async for message in self._mqttClient.messages:
                 if not self._running and not self._reconnecting:
                     break
-                try:    
-                    if b'lastIssuedSeqId' in message.payload or b'firstDeltaSeqId' in message.payload or b'syncToken' in message.payload: #type: ignore
+                try:
+                    if b"lastIssuedSeqId" in message.payload or b"firstDeltaSeqId" in message.payload or b"syncToken" in message.payload:  # type: ignore
                         self.extract_meta(message.payload)
 
-
-                    payload = message.payload #type: ignore
+                    payload = message.payload  # type: ignore
                     topic = message.topic.value
                     if self._message_handler:
                         await self._message_handler(topic, payload)
+                except asyncio.CancelledError:
+                    raise
                 except Exception as e:
-                    FBChatError("Failed to receive message payloads", original_exception=e)
+                    logger.error(
+                        "Failed to process MQTT message payload", exc_info=True
+                    )
+                    raise FBChatError(
+                        "Failed to receive message payloads", original_exception=e
+                    ) from e
 
         except asyncio.CancelledError:
             # normal shutdown, just exit silently
@@ -286,7 +300,6 @@ class Mqtt:
         finally:
             logger.info("MQTT listening loop ended")
 
-
     def parse_json(self, data):
         try:
             return json.loads(data)
@@ -297,12 +310,10 @@ class Mqtt:
             logger.error(f"Unexpected error parsing JSON: {e}")
             return {"error": str(e), "raw_data": data}
 
-
     async def set_foreground(self, value):
         payload = json.dumps({"foreground": value})
         await self._mqttClient.publish("/foreground_state", payload=payload, qos=1)
         self._foreground = value
-
 
     async def set_chat_on(self, value):
         data = {"make_user_available_when_in_foreground": value}
@@ -310,15 +321,13 @@ class Mqtt:
         await self._mqttClient.publish("/set_client_settings", payload=payload, qos=1)
         self._chat_on = value
 
-
     def _generate_presence(self) -> Dict[str, Any]:
         """Generate presence payload"""
         return {
             "user_id": self._state.user_id,
             "last_active": int(time.time() * 1000),
-            "active": True
+            "active": True,
         }
-
 
     async def _presence_updater(self):
         """Periodically update presence status"""
@@ -327,9 +336,7 @@ class Mqtt:
                 if self._mqttClient._client.is_connected():
                     presence_payload = self._generate_presence()
                     await self._mqttClient.publish(
-                        '/orca_presence', 
-                        json.dumps({"p": presence_payload}), 
-                        qos=1
+                        "/orca_presence", json.dumps({"p": presence_payload}), qos=1
                     )
                     logger.debug("Presence updated")
                 await asyncio.sleep(50)  # Update every 50 seconds
@@ -341,8 +348,6 @@ class Mqtt:
                 logger.error(f"Error updating presence: {e}")
                 await asyncio.sleep(10)
 
-
-    
     async def _cancel_task(self, task: asyncio.Task | None):
         """Cancel an asyncio task if running, and await its cleanup."""
         if task and not task.done():
@@ -351,7 +356,6 @@ class Mqtt:
                 await task
             except asyncio.CancelledError:
                 pass
-
 
     async def stop(self):
         """Clean disconnect from MQTT"""
@@ -377,9 +381,9 @@ class Mqtt:
         # Disconnect current client
         if self._mqttClient:
             await self._mqttClient.__aexit__(None, None, None)
-       
+
         await asyncio.sleep(2)
-        
+
         self._mqttClientID = self._state._mqttClientID = generate_uuid()
         logger.debug(f"Generated new MQTT client ID: {self._mqttClientID}")
         self._sequence_id = await self._fetch_sequence_id(self._state)
@@ -392,14 +396,14 @@ class Mqtt:
             protocol=aiomqtt.ProtocolVersion.V31,
             transport="websockets",
             port=443,
-            keepalive=60
+            keepalive=60,
         )
-        
+
         # Reconnect with new configuration
         self._mqttClient._client.tls_set()
         self._configure_mqtt_options()
         await self._mqttClient.__aenter__()
-        
+
         if self._mqttClient._client.is_connected():
             logger.info("✅ MQTT reconnected successfully")
             self._sync_token = None
@@ -413,7 +417,6 @@ class Mqtt:
             logger.info("✅ Reconnected and restarted listen/presence loops")
         self._reconnecting = False
 
-
     async def _schedule_reconnect(self):
         """Schedule periodic reconnections with random intervals"""
         while self._running:
@@ -425,6 +428,3 @@ class Mqtt:
                 await self._reconnect()
             except Exception as e:
                 logger.error(f"Reconnection failed: {e}")
-
-
-
