@@ -22,6 +22,7 @@ class AttachmentType(str, Enum):
     FACEBOOKPRODUCT = "CommerceProductItemShare"
     FACEBOOKGAME = "MessengerBusinessMessage"
     MessengerCommunityInviteLink = "XFBMessengerCommunityInviteLink"
+    INSTAGRAM_MEDIA = "InstagramMediaAttachmentLink"
 
 #---------- Class Attributes of main classes ------------#
 

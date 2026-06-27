@@ -506,9 +506,10 @@ class MessageParser:
     ) -> Message:
         """Parse a single fetched grapql message"""
         try:
+            msg_data = m.get("message") or {}
             return Message(
                 id=m["message_id"],
-                text=m["message"]["text"],
+                text=msg_data.get("text", ""),
                 sender_id=m["message_sender"]["id"],
                 thread_id=thread_id,
                 thread_type=thread_type,
@@ -530,20 +531,12 @@ class MessageParser:
                         reacted_message_sender=m["message_sender"]["id"],
                         timestamp=None,
                     )
-                    for r in m["message_reactions"]
+                    for r in (m.get("message_reactions") or [])
                 ],
-                mentions=self.parse_mention(m["message"]["ranges"]),
+                mentions=self.parse_mention(msg_data.get("ranges")),
                 thread_folder=ThreadFolder.INBOX,
                 thread_participants=None,
-                attachments=(
-                    [
-                        self.parse_attachment(
-                            self.thread_message_atchmnt.decode(json.encode(m))
-                        )
-                    ]
-                    if self.has_attachment(m)
-                    else None
-                ),
+                attachments=self._safe_parse_attachments(m),
             )
         except KeyError as e:
             raise ParsingError(
@@ -556,30 +549,31 @@ class MessageParser:
             )
 
     def get_from_attachment(self, m) -> MessageType:
-
-        if m["blob_attachments"] != []:
-            return self._attach_to_message[
-                AttachmentType(m["blob_attachments"][0]["__typename"])
-            ]
-        elif m["sticker"]:
-            return MessageType.STICKER
-        elif m["extensible_attachment"]:
-            return (
-                self._attach_to_message[
-                    AttachmentType(
-                        m["extensible_attachment"]["story_attachment"]["target"][
-                            "__typename"
-                        ]
-                    )
+        try:
+            if m.get("blob_attachments"):
+                return self._attach_to_message[
+                    AttachmentType(m["blob_attachments"][0]["__typename"])
                 ]
-                if m["extensible_attachment"]["story_attachment"]["target"]
-                else MessageType.TEXT
-            )
-        else:
-            return MessageType.TEXT
+            elif m.get("sticker"):
+                return MessageType.STICKER
+            elif m.get("extensible_attachment"):
+                return (
+                    self._attach_to_message[
+                        AttachmentType(
+                            m["extensible_attachment"]["story_attachment"]["target"][
+                                "__typename"
+                            ]
+                        )
+                    ]
+                    if m["extensible_attachment"]["story_attachment"]["target"]
+                    else MessageType.TEXT
+                )
+        except (ValueError, KeyError, TypeError):
+            pass
+        return MessageType.TEXT
 
     def parse_mention(self, ranges) -> List[Mention] | None:
-        if ranges != []:
+        if ranges:
             return [
                 Mention(
                     user_id=m["entity"]["id"], offset=m["offset"], length=m["length"]
@@ -588,7 +582,19 @@ class MessageParser:
             ]
 
     def has_attachment(self, m):
-        return m["blob_attachments"] or m["sticker"] or (m["blob_attachments"] != [])
+        return m.get("blob_attachments") or m.get("sticker") or m.get("extensible_attachment")
+
+    def _safe_parse_attachments(self, m):
+        if not self.has_attachment(m):
+            return None
+        try:
+            return [
+                self.parse_attachment(
+                    self.thread_message_atchmnt.decode(json.encode(m))
+                )
+            ]
+        except (ValueError, TypeError, Exception):
+            return None
 
     def parse_notifications(self, eventdata):
 

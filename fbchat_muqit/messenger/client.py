@@ -112,7 +112,7 @@ class MessengerClient:
                         "message_limit": 0,
                         "load_messages": False,
                         "load_read_receipts": False,
-                        "before": None,
+                "before": before,
                     }) for thread_id in thread_ids
                 )
         data = {
@@ -185,7 +185,7 @@ class MessengerClient:
                     "message_limit": message_limit,
                     "load_messages": True,
                     "load_read_receipts": True,
-                    "before": None,
+                    "before": before,
                     })
 
         data = {"queries": self._graphql.queries_to_json(query)}
